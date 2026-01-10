@@ -1,9 +1,20 @@
+// Package app provides a TUI for managing AWS AppConfig feature flags.
+//
+// AppConfig Data Hierarchy:
+//   - Application (e.g., "Wordle")
+//     └── Configuration Profile (e.g., "WebFeatureFlags", "APIFeatureFlags", "iOSAppFeatureFlags")
+//     └── Environment (e.g., "development", "production")
+//     └── Feature Flags (key-value pairs with enabled/disabled state)
+//
+// UI Flow:
+//  1. Select Application
+//  2. Select Configuration Profile
+//  3. View flag matrix (flags × environments)
 package app
 
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/table"
@@ -12,10 +23,6 @@ import (
 	"github.com/simonschwartz/app-config-lazy-flags/internal/filecache"
 )
 
-// generalise list component DONE
-// navigate back views using esc DONE
-// cache configs per app in memory DONE
-// cache config errors in memory too DONE
 // pagination
 // filter search
 // add loading state
@@ -24,33 +31,35 @@ import (
 type view int
 
 const (
+	// initial screen displaying list of app config apps user has access to
 	appList view = iota
+
+	// displays list of feature flag configs for selected app
 	configList
+
+	// displays all feature flags and their state per environment
 	flagsTable
 )
 
 type Model struct {
 	appconfigClient appconfig.Client
-	cache           filecache.Cache
+	filecache       filecache.Cache
 
 	activeView view
 
-	appList     list.Model
-	apps        []appconfig.App
-	selectedApp string
+	appList list.Model
 
 	configList   list.Model
-	configs      []appconfig.AppFlagConfig
 	configsCache map[string]configsLoader
 
 	flagsTable table.Model
 }
 
-func NewModel(appconfigClient *appconfig.Client, cache *filecache.Cache) Model {
+func NewModel(appconfigClient *appconfig.Client, filecache *filecache.Cache) Model {
 	return Model{
 		appconfigClient: *appconfigClient,
 		configsCache:    make(map[string]configsLoader),
-		cache:           *cache,
+		filecache:       *filecache,
 		appList:         RenderAppList([]appconfig.App{}),
 		activeView:      appList,
 	}
@@ -64,55 +73,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case appsLoader:
 		if msg.err != nil {
-			return m, tea.Quit
+			return m, m.appList.NewStatusMessage(msg.err.Error())
 		}
-		m.apps = msg.apps
 		m.appList = RenderAppList(msg.apps)
 		return m, nil
 	case configsLoader:
 		if msg.err != nil {
 			return m, m.appList.NewStatusMessage("Could not access configs")
 		}
-		m.configs = msg.configs
 		m.activeView = configList
 		m.configList = RenderConfigList(msg.configs)
+		m.configsCache[msg.appId] = msg
 		return m, nil
 	case flagsLoader:
+		if msg.err != nil {
+		}
 		m.activeView = flagsTable
 		m.flagsTable = RenderFlagsTable(msg.flags)
-
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
+		// allow user to go back to previous view
 		case "esc":
-			if m.activeView == appList {
-				// do nothing - because default behaviour is to exit the app
-				return m, nil
-			}
-			if m.activeView == configList {
+			switch m.activeView {
+			case configList:
 				m.activeView = appList
-				return m, nil
-			}
-			if m.activeView == flagsTable {
+			case flagsTable:
 				m.activeView = configList
-				return m, nil
 			}
+			return m, nil
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "enter":
 			if m.activeView == appList {
 				i, ok := m.appList.SelectedItem().(AppItem)
 				if ok {
-					m.selectedApp = i.FilterValue()
 					return m, m.loadConfigsCmd(*i.Id)
 				}
 			}
 
 			if m.activeView == configList {
-				_, ok := m.configList.SelectedItem().(ConfigItem)
-				if ok {
-					selectedAppId := m.appList.SelectedItem().(AppItem).Id
-					selectedConfigId := m.configList.SelectedItem().(ConfigItem).Id
-					return m, m.loadFlagsCmd(*selectedAppId, *selectedConfigId)
+				if config, ok := m.configList.SelectedItem().(ConfigItem); ok {
+					if app, ok := m.appList.SelectedItem().(AppItem); ok {
+						return m, m.loadFlagsCmd(*app.Id, *config.Id)
+					}
 				}
 			}
 		}
@@ -135,11 +139,9 @@ func (m Model) View() string {
 	case appList:
 		return m.appList.View()
 	case configList:
-		view := m.configList.View()
-		return view
+		return m.configList.View()
 	case flagsTable:
-		view := m.flagsTable.View()
-		return view
+		return m.flagsTable.View()
 	}
 	return ""
 }
@@ -151,7 +153,7 @@ type appsLoader struct {
 
 func (m Model) loadAppsCmd() tea.Cmd {
 	return func() tea.Msg {
-		apps, err := m.appconfigClient.ListApps(context.TODO())
+		apps, err := m.appconfigClient.ListApps(context.Background())
 		return appsLoader{apps: apps, err: err}
 	}
 }
@@ -166,14 +168,12 @@ func (m Model) loadConfigsCmd(appId string) tea.Cmd {
 	return func() tea.Msg {
 		cachedConfig, ok := m.configsCache[appId]
 		if ok {
-			log.Printf("from cache")
 			return cachedConfig
 		}
 
-		configs, err := m.appconfigClient.ListAppFlagConfigs(context.TODO(), appId)
+		configs, err := m.appconfigClient.ListAppFlagConfigs(context.Background(), appId)
 		result := configsLoader{appId: appId, configs: configs, err: err}
 
-		m.configsCache[appId] = result
 		return result
 	}
 }
@@ -183,24 +183,25 @@ type flagsLoader struct {
 	err   error
 }
 
+// fetch all feature flags for all environments for a given app + config
+// this request includes a request that costs $$$ so results are cached to file
 func (m Model) loadFlagsCmd(appId string, configId string) tea.Cmd {
 	return func() tea.Msg {
 		cacheKey := fmt.Sprintf("%s:%s", appId, configId)
-		cached, ok := m.cache.Get(cacheKey)
+		cached, ok := m.filecache.Get(cacheKey)
 		if ok {
-			log.Printf("flags from cache")
 			return flagsLoader{
 				flags: cached,
 				err:   nil,
 			}
 		}
-		flags, err := m.appconfigClient.GetFlags(context.TODO(), appId, configId)
+
+		flags, err := m.appconfigClient.GetFlags(context.Background(), appId, configId)
 		result := flagsLoader{
 			flags: flags,
 			err:   err,
 		}
-		m.cache.Add(cacheKey, flags)
-		log.Printf("flags not from cache")
+		m.filecache.Add(cacheKey, flags)
 		return result
 	}
 }
