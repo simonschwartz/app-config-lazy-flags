@@ -5,7 +5,49 @@ import (
 	"github.com/simonschwartz/app-config-lazy-flags/internal/appconfig"
 )
 
-func pivotResults(results []appconfig.Result, envOrder []string) []table.Row {
+// FlagRowData represents a single flag and its state across all environments
+type FlagRowData struct {
+	FlagName  string
+	EnvStates map[string]string // envName -> state (✓/✗/-)
+}
+
+// ToTableRow converts the structured data to a table.Row for rendering
+func (f FlagRowData) ToTableRow(envOrder []string) table.Row {
+	row := table.Row{f.FlagName}
+	for _, envName := range envOrder {
+		state, exists := f.EnvStates[envName]
+		if !exists {
+			state = "-"
+		}
+		row = append(row, state)
+	}
+	return row
+}
+
+// GetEnvState returns the state for a specific environment
+func (f FlagRowData) GetEnvState(envName string) string {
+	if state, ok := f.EnvStates[envName]; ok {
+		return state
+	}
+	return "-"
+}
+
+// FlagsTableData holds both the structured data and rendering info
+type FlagsTableData struct {
+	Flags    []FlagRowData
+	EnvOrder []string
+}
+
+// ToTableRows converts all flag data to table rows
+func (d FlagsTableData) ToTableRows() []table.Row {
+	rows := make([]table.Row, 0, len(d.Flags))
+	for _, flag := range d.Flags {
+		rows = append(rows, flag.ToTableRow(d.EnvOrder))
+	}
+	return rows
+}
+
+func pivotResults(results []appconfig.Result, envOrder []string) FlagsTableData {
 	// Build lookup map: flagName -> envName -> enabled
 	flagStates := make(map[string]map[string]bool)
 
@@ -18,27 +60,35 @@ func pivotResults(results []appconfig.Result, envOrder []string) []table.Row {
 		}
 	}
 
-	// Build rows with flag name + state per environment
-	rows := make([]table.Row, 0, len(flagStates))
+	// Build structured flag data
+	flags := make([]FlagRowData, 0, len(flagStates))
 	for flagName, envMap := range flagStates {
-		row := table.Row{flagName}
+		flagRow := FlagRowData{
+			FlagName:  flagName,
+			EnvStates: make(map[string]string),
+		}
+
 		for _, envName := range envOrder {
 			enabled, exists := envMap[envName]
 			if !exists {
-				row = append(row, "-")
+				flagRow.EnvStates[envName] = "-"
 			} else if enabled {
-				row = append(row, "✓")
+				flagRow.EnvStates[envName] = "✓"
 			} else {
-				row = append(row, "✗")
+				flagRow.EnvStates[envName] = "✗"
 			}
 		}
-		rows = append(rows, row)
+
+		flags = append(flags, flagRow)
 	}
 
-	return rows
+	return FlagsTableData{
+		Flags:    flags,
+		EnvOrder: envOrder,
+	}
 }
 
-func RenderFlagsTable(flags []appconfig.Result) table.Model {
+func RenderFlagsTable(flags []appconfig.Result) (table.Model, FlagsTableData) {
 	columns := []table.Column{
 		{Title: "Flag Name", Width: 20},
 	}
@@ -53,13 +103,13 @@ func RenderFlagsTable(flags []appconfig.Result) table.Model {
 		})
 	}
 
-	rows := pivotResults(flags, envOrder)
+	tableData := pivotResults(flags, envOrder)
 
 	t := table.New(
 		table.WithColumns(columns),
-		table.WithRows(rows),
+		table.WithRows(tableData.ToTableRows()),
 		table.WithFocused(true),
 	)
 
-	return t
+	return t, tableData
 }

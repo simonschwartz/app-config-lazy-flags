@@ -37,7 +37,11 @@ func Run() {
 	}
 	client := appconfig.New(cfg)
 
-	p := tea.NewProgram(NewModel(client, cacheClient))
+	p := tea.NewProgram(
+		NewModel(client, cacheClient),
+		tea.WithAltScreen(),       // Use alternate screen buffer (full screen)
+		// tea.WithMouseCellMotion(), // Enable mouse support
+	)
 
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Failed to run: %v", err)

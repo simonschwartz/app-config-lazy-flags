@@ -10,11 +10,8 @@ import (
 )
 
 const (
-	// cache filename
 	filename = ".cache"
-	// cache dir
 	dir = "LazyFlags"
-	// ttl
 	ttl = time.Minute
 )
 
