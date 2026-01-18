@@ -47,46 +47,6 @@ func (d FlagsTableData) ToTableRows() []table.Row {
 	return rows
 }
 
-func pivotResults(results []appconfig.Result, envOrder []string) FlagsTableData {
-	// Build lookup map: flagName -> envName -> enabled
-	flagStates := make(map[string]map[string]bool)
-
-	for _, result := range results {
-		for flagName, flag := range result.Flags {
-			if flagStates[flagName] == nil {
-				flagStates[flagName] = make(map[string]bool)
-			}
-			flagStates[flagName][result.EnvName] = flag.Enabled
-		}
-	}
-
-	// Build structured flag data
-	flags := make([]FlagRowData, 0, len(flagStates))
-	for flagName, envMap := range flagStates {
-		flagRow := FlagRowData{
-			FlagName:  flagName,
-			EnvStates: make(map[string]string),
-		}
-
-		for _, envName := range envOrder {
-			enabled, exists := envMap[envName]
-			if !exists {
-				flagRow.EnvStates[envName] = "-"
-			} else if enabled {
-				flagRow.EnvStates[envName] = "✓"
-			} else {
-				flagRow.EnvStates[envName] = "✗"
-			}
-		}
-
-		flags = append(flags, flagRow)
-	}
-
-	return FlagsTableData{
-		Flags:    flags,
-		EnvOrder: envOrder,
-	}
-}
 
 func RenderFlagsTable(flags []appconfig.Result) (table.Model, FlagsTableData) {
 	columns := []table.Column{

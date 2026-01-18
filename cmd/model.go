@@ -15,18 +15,12 @@ package app
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/simonschwartz/app-config-lazy-flags/internal/appconfig"
 	"github.com/simonschwartz/app-config-lazy-flags/internal/filecache"
 )
-
-// pagination
-// add loading state
-// add test mode
 
 type view int
 
@@ -57,8 +51,7 @@ type Model struct {
 	configsCache map[string]configsLoader
 	configError  string // stores config loading error message
 
-	flagsTable table.Model
-	flagsData  FlagsTableData
+	flagsTable *FlagsTable
 
 	// Flag detail view state
 	selectedFlagIdx int // which flag in flagsData.Flags is selected (-1 = none)
@@ -67,6 +60,8 @@ type Model struct {
 
 func NewModel(appconfigClient *appconfig.Client, filecache *filecache.Cache) Model {
 	appsPanel := NewAppsPanel(20, 50, []appconfig.App{})
+	configsPanel := NewConfigsPanel(20, 50, []appconfig.AppFlagConfig{})
+	flagsTable := NewFlagsTable(20, 50, []appconfig.Result{})
 
 	return Model{
 		appconfigClient: *appconfigClient,
@@ -76,6 +71,8 @@ func NewModel(appconfigClient *appconfig.Client, filecache *filecache.Cache) Mod
 		selectedFlagIdx: -1,
 		selectedEnvIdx:  0,
 		appsPanel:       appsPanel,
+		configsPanel:    configsPanel,
+		flagsTable:      flagsTable,
 	}
 }
 
@@ -113,10 +110,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.activeView = flagsTable
-		m.flagsTable, m.flagsData = RenderFlagsTable(msg.flags)
-		m.selectedFlagIdx = -1
-		m.selectedEnvIdx = 0
-		return m, nil
+		cmd := m.flagsTable.SetData(msg.flags)
+		return m, cmd
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -157,54 +152,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			if m.activeView == flagsTable {
-				cursor := m.flagsTable.Cursor()
-				if cursor >= 0 && cursor < len(m.flagsData.Flags) {
-					m.selectedFlagIdx = cursor
-					m.selectedEnvIdx = 0
-					m.activeView = flagDetail
-					return m, nil
-				}
-			}
-
-		case "left", "h":
-			if m.activeView == flagDetail && m.selectedEnvIdx > 0 {
-				m.selectedEnvIdx--
-				return m, nil
-			}
-
-		case "right", "l":
-			if m.activeView == flagDetail {
-				maxIdx := len(m.flagsData.EnvOrder) - 1
-				if m.selectedEnvIdx < maxIdx {
-					m.selectedEnvIdx++
-				}
-				return m, nil
-			}
-
-		case " ", "t":
-			// Toggle flag state for selected environment
-			if m.activeView == flagDetail && m.selectedFlagIdx >= 0 {
-				if m.selectedFlagIdx < len(m.flagsData.Flags) &&
-					m.selectedEnvIdx < len(m.flagsData.EnvOrder) {
-
-					flag := &m.flagsData.Flags[m.selectedFlagIdx]
-					envName := m.flagsData.EnvOrder[m.selectedEnvIdx]
-					currentState := flag.EnvStates[envName]
-
-					// Toggle: ✓ <-> ✗ (skip "-" which means not set)
-					if currentState == "✓" {
-						flag.EnvStates[envName] = "✗"
-					} else if currentState == "✗" {
-						flag.EnvStates[envName] = "✓"
-					}
-
-					// Update the table rows to reflect the change
-					m.flagsTable.SetRows(m.flagsData.ToTableRows())
-
-					return m, nil
-				}
-			}
+			// if m.activeView == flagsTable {
+			// 	cursor := m.flagsTable.Cursor()
+			// 	if cursor >= 0 && cursor < len(m.flagsData.Flags) {
+			// 		m.selectedFlagIdx = cursor
+			// 		m.selectedEnvIdx = 0
+			// 		m.activeView = flagDetail
+			// 		return m, nil
+			// 	}
+			// }
 		}
 	}
 
@@ -219,7 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = m.configsPanel.HandleMsg(msg)
 		}
 	case flagsTable:
-		m.flagsTable, cmd = m.flagsTable.Update(msg)
+		cmd = m.flagsTable.HandleMsg(msg)
 	case flagDetail:
 		// Don't pass key events to underlying components in detail view
 		return m, nil
@@ -228,9 +184,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	// Fixed pane width for consistent layout
-	const fixedPaneWidth = 56
-
 	// Clear screen and add consistent top padding
 	// The \033[H moves cursor to home position (0,0)
 	// The \033[2J clears the screen
@@ -255,129 +208,47 @@ func (m Model) View() string {
 			}
 		}
 	case flagsTable:
-		view += RenderPanel(m.flagsTable.View(), "Feature Flags", 50)
-	case flagDetail:
-		view += m.renderFlagDetailView()
+		view += m.flagsTable.Render()
+		// case flagDetail:
+		// 	view += m.renderFlagDetailView()
 	}
 
 	return view
 }
 
-// func (m Model) joinHorizontal(left, right string) string {
-// 	leftLines := strings.Split(left, "\n")
-// 	rightLines := strings.Split(right, "\n")
-//
-// 	// Calculate max width for each pane
-// 	maxLeftWidth := 0
-// 	for _, line := range leftLines {
-// 		if len(line) > maxLeftWidth {
-// 			maxLeftWidth = len(line)
-// 		}
+// func (m Model) renderFlagDetailView() string {
+// 	if m.selectedFlagIdx < 0 || m.selectedFlagIdx >= len(m.flagsData.Flags) {
+// 		return "No flag selected"
 // 	}
 //
-// 	maxRightWidth := 0
-// 	for _, line := range rightLines {
-// 		if len(line) > maxRightWidth {
-// 			maxRightWidth = len(line)
-// 		}
-// 	}
+// 	flag := m.flagsData.Flags[m.selectedFlagIdx]
 //
-// 	maxLines := len(leftLines)
-// 	if len(rightLines) > maxLines {
-// 		maxLines = len(rightLines)
-// 	}
+// 	var content strings.Builder
 //
-// 	var result strings.Builder
-// 	for i := 0; i < maxLines; i++ {
-// 		// Add left pane line with padding to max width
-// 		if i < len(leftLines) {
-// 			result.WriteString(leftLines[i])
-// 			// Pad to max left width
-// 			padding := maxLeftWidth - len(leftLines[i])
-// 			if padding > 0 {
-// 				result.WriteString(strings.Repeat(" ", padding))
-// 			}
+// 	// Flag name
+// 	content.WriteString(fmt.Sprintf("Flag: %s\n", flag.FlagName))
+// 	content.WriteString("\n")
+//
+// 	// Instructions
+// 	content.WriteString("Use ← → (or h/l) to navigate\n")
+// 	content.WriteString("Press SPACE or 't' to toggle state\n")
+// 	content.WriteString("Press ESC to go back\n")
+// 	content.WriteString("\n")
+//
+// 	// Environment states with selection indicator
+// 	for i, envName := range m.flagsData.EnvOrder {
+// 		state := flag.GetEnvState(envName)
+//
+// 		// Highlight selected environment
+// 		if i == m.selectedEnvIdx {
+// 			content.WriteString(fmt.Sprintf("→ %-20s │ %-10s\n", envName, state))
 // 		} else {
-// 			// Empty line padded to width
-// 			result.WriteString(strings.Repeat(" ", maxLeftWidth))
+// 			content.WriteString(fmt.Sprintf("  %-20s │ %-10s\n", envName, state))
 // 		}
-//
-// 		result.WriteString("  ") // spacing between panes
-//
-// 		// Add right pane line
-// 		if i < len(rightLines) {
-// 			result.WriteString(rightLines[i])
-// 		}
-//
-// 		result.WriteString("\n")
 // 	}
 //
-// 	return result.String()
+// 	return RenderPanel(content.String(), "Edit Flag State", 50)
 // }
-
-// joinHorizontalSimple joins two pre-formatted panes side-by-side (simpler since they're same width)
-//
-//	func (m Model) joinHorizontalSimple(left, right string) string {
-//		leftLines := strings.Split(left, "\n")
-//		rightLines := strings.Split(right, "\n")
-//
-//		maxLines := len(leftLines)
-//		if len(rightLines) > maxLines {
-//			maxLines = len(rightLines)
-//		}
-//
-//		var result strings.Builder
-//		for i := 0; i < maxLines; i++ {
-//			// Add left pane line
-//			if i < len(leftLines) {
-//				result.WriteString(leftLines[i])
-//			}
-//
-//			result.WriteString("  ") // spacing between panes
-//
-//			// Add right pane line
-//			if i < len(rightLines) {
-//				result.WriteString(rightLines[i])
-//			}
-//
-//			result.WriteString("\n")
-//		}
-//
-//		return result.String()
-//	}
-func (m Model) renderFlagDetailView() string {
-	if m.selectedFlagIdx < 0 || m.selectedFlagIdx >= len(m.flagsData.Flags) {
-		return "No flag selected"
-	}
-
-	flag := m.flagsData.Flags[m.selectedFlagIdx]
-
-	var content strings.Builder
-
-	// Flag name
-	content.WriteString(fmt.Sprintf("Flag: %s\n", flag.FlagName))
-	content.WriteString("\n")
-
-	// Instructions
-	content.WriteString("Use ← → (or h/l) to navigate\n")
-	content.WriteString("Press SPACE or 't' to toggle state\n")
-	content.WriteString("Press ESC to go back\n")
-	content.WriteString("\n")
-
-	// Environment states with selection indicator
-	for i, envName := range m.flagsData.EnvOrder {
-		state := flag.GetEnvState(envName)
-
-		// Highlight selected environment
-		if i == m.selectedEnvIdx {
-			content.WriteString(fmt.Sprintf("→ %-20s │ %-10s\n", envName, state))
-		} else {
-			content.WriteString(fmt.Sprintf("  %-20s │ %-10s\n", envName, state))
-		}
-	}
-
-	return RenderPanel(content.String(), "Edit Flag State", 50)
-}
 
 type appsLoader struct {
 	apps []appconfig.App

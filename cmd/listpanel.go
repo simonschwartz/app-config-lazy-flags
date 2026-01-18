@@ -41,11 +41,20 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	io.WriteString(w, str)
 }
 
-// Render a navigatable bubbletea list inside a beautiful ascii panel.
+// Render a navigatable bubbletea list inside a most beautiful ascii panel.
+//
+// CLI output looks like this:
+//
+// ┌─ Panel Title ──────────────────────────────────┐
+// │                                                │
+// │  > List Item 1                                 │
+// │    List Item 2                                 │
+// │    Another List Item                           │
+// │                                                │
+// └────────────────────────────────────────────────┘
 func NewListPanel(height int, width int, title string, items []list.Item) *ListPanel {
 	delegate := itemDelegate{}
 
-	// Create the list model
 	l := list.New(items, delegate, width-4, height)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
