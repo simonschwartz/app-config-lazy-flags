@@ -43,31 +43,31 @@ func TestFlagsTableRender(t *testing.T) {
 				},
 			},
 			expected: strings.Join([]string{
-				"┌─ Feature Flags ─────────────────────────────────────────────────────────┐",
-				"│                                                                         │",
-				"│  Flag Name             development      staging          production     │",
-				"│  beta_feature          on               off              off            │",
-				"│  dark_mode             on               on               off            │",
-				"│  new_checkout          off              on               off            │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"│                                                                         │",
-				"└─────────────────────────────────────────────────────────────────────────┘",
+				"┌─ Feature Flags ──────────────────────────────────────────────────────────────┐",
+				"│                                                                              │",
+				"│  Flag Name             development      staging          production          │",
+				"│  beta_feature          on               off              off                 │",
+				"│  dark_mode             on               on               off                 │",
+				"│  new_checkout          off              on               off                 │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"│                                                                              │",
+				"└──────────────────────────────────────────────────────────────────────────────┘",
 			}, "\n"),
 		},
 		{
@@ -114,52 +114,52 @@ func TestFlagsTableRender(t *testing.T) {
 	}
 }
 
-// func TestConfigsPanelRenderError(t *testing.T) {
-// 	tests := []struct {
-// 		name     string
-// 		errMsg   string
-// 		expected string
-// 	}{
-// 		{
-// 			name:   "should render config list with error",
-// 			errMsg: "Access: Permission Denied",
-// 			expected: strings.Join([]string{
-// 				"┌─ Configuration Profiles ───────────────────────┐",
-// 				"│                                                │",
-// 				"│  Access: Permission Denied                     │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"│                                                │",
-// 				"└────────────────────────────────────────────────┘",
-// 			}, "\n"),
-// 		},
-// 	}
-//
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			configsPanel := app.NewConfigsPanel(20, 50, []appconfig.AppFlagConfig{})
-// 			result := configsPanel.RenderError(tt.errMsg)
-//
-// 			if result != tt.expected {
-// 				t.Errorf("result: \n %v, expected \n %v", result, tt.expected)
-// 			}
-// 		})
-// 	}
-// }
+func TestFlagsTableRenderError(t *testing.T) {
+	tests := []struct {
+		name     string
+		errMsg   string
+		expected string
+	}{
+		{
+			name:   "should render config list with error",
+			errMsg: "Error: Could not get flags",
+			expected: strings.Join([]string{
+				"┌─ Feature Flags ────────────────────────────────┐",
+				"│                                                │",
+				"│  Error: Could not get flags                    │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"│                                                │",
+				"└────────────────────────────────────────────────┘",
+			}, "\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flagsTable := app.NewFlagsTable(20, 50, []appconfig.Result{})
+			result := flagsTable.RenderError(tt.errMsg)
+
+			if result != tt.expected {
+				t.Errorf("result: \n %v, expected \n %v", result, tt.expected)
+			}
+		})
+	}
+}

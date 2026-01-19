@@ -44,15 +44,17 @@ type Model struct {
 
 	activeView view
 
-	appsPanel *ListPanel
-	appsError string // stores apps loading error message
+	appsPanel      *ListPanel
+	appsPanelError string
 
-	configsPanel *ListPanel
-	configsCache map[string]configsLoader
-	configError  string // stores config loading error message
+	configsPanel      *ListPanel
+	configsCache      map[string]configsLoader
+	configsPanelError string
 
-	flagsTable *FlagsTable
+	flagsTable      *FlagsTable
+	flagsTableError string
 
+	flagDetail *FlagDetail
 	// Flag detail view state
 	selectedFlagIdx int // which flag in flagsData.Flags is selected (-1 = none)
 	selectedEnvIdx  int // which environment is highlighted in detail view
@@ -62,6 +64,7 @@ func NewModel(appconfigClient *appconfig.Client, filecache *filecache.Cache) Mod
 	appsPanel := NewAppsPanel(20, 50, []appconfig.App{})
 	configsPanel := NewConfigsPanel(20, 50, []appconfig.AppFlagConfig{})
 	flagsTable := NewFlagsTable(20, 50, []appconfig.Result{})
+	flagDetail := NewFlagDetail(flagsTable.Render)
 
 	return Model{
 		appconfigClient: *appconfigClient,
@@ -73,6 +76,7 @@ func NewModel(appconfigClient *appconfig.Client, filecache *filecache.Cache) Mod
 		appsPanel:       appsPanel,
 		configsPanel:    configsPanel,
 		flagsTable:      flagsTable,
+		flagDetail:      flagDetail,
 	}
 }
 
@@ -84,10 +88,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case appsLoader:
 		if msg.err != nil {
-			m.appsError = fmt.Sprintf("Error: %v", msg.err)
+			m.appsPanelError = fmt.Sprintf("Error: %v", msg.err)
 			return m, nil
 		}
-		m.appsError = ""
+
+		m.appsPanelError = ""
 		var appItems []list.Item
 		for _, app := range msg.apps {
 			appItems = append(appItems, AppItem(app))
@@ -95,21 +100,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.appsPanel.SetItems(appItems)
 		return m, cmd
 	case configsLoader:
-		if msg.err != nil {
-			m.configError = fmt.Sprintf("Error: %v", msg.err)
-			m.activeView = configList
-			return m, nil
-		}
-		m.configError = ""
 		m.activeView = configList
-		m.configsPanel = NewConfigsPanel(20, 50, msg.configs)
-		m.configsCache[msg.appId] = msg
-		return m, nil
-	case flagsLoader:
 		if msg.err != nil {
+			m.configsPanelError = fmt.Sprintf("Error: %v", msg.err)
 			return m, nil
 		}
+		m.configsPanelError = ""
+		var configItems []list.Item
+		for _, config := range msg.configs {
+			configItems = append(configItems, ConfigItem(config))
+		}
+		cmd := m.configsPanel.SetItems(configItems)
+		m.configsCache[msg.appId] = msg
+		return m, cmd
+	case flagsLoader:
 		m.activeView = flagsTable
+		if msg.err != nil {
+			m.flagsTableError = fmt.Sprintf("Error: %v", msg.err)
+			return m, nil
+		}
 		cmd := m.flagsTable.SetData(msg.flags)
 		return m, cmd
 
@@ -123,6 +132,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case flagsTable:
 				m.activeView = configList
 			case flagDetail:
+				// If confirming, cancel and stay in detail view
+				if m.flagDetail.IsConfirming() {
+					m.flagDetail.CancelConfirm()
+					return m, nil
+				}
 				m.activeView = flagsTable
 				m.selectedFlagIdx = -1
 			}
@@ -139,28 +153,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if m.activeView == configList {
-				if m.configsPanel != nil {
-					if item, ok := m.configsPanel.SelectedItem(); ok {
-						if config, ok := item.(ConfigItem); ok {
-							if appItem, ok := m.appsPanel.SelectedItem(); ok {
-								if app, ok := appItem.(AppItem); ok {
-									return m, m.loadFlagsCmd(*app.Id, *config.Id)
-								}
+				if item, ok := m.configsPanel.SelectedItem(); ok {
+					if config, ok := item.(ConfigItem); ok {
+						if appItem, ok := m.appsPanel.SelectedItem(); ok {
+							if app, ok := appItem.(AppItem); ok {
+								return m, m.loadFlagsCmd(*app.Id, *config.Id)
 							}
 						}
 					}
 				}
 			}
 
-			// if m.activeView == flagsTable {
-			// 	cursor := m.flagsTable.Cursor()
-			// 	if cursor >= 0 && cursor < len(m.flagsData.Flags) {
-			// 		m.selectedFlagIdx = cursor
-			// 		m.selectedEnvIdx = 0
-			// 		m.activeView = flagDetail
-			// 		return m, nil
-			// 	}
-			// }
+			if m.activeView == flagsTable {
+				selectedFlag := m.flagsTable.GetActiveRow()
+				cmd := m.flagDetail.SetData(selectedFlag, m.flagsTable.EnvOrder())
+				m.activeView = flagDetail
+				return m, cmd
+			}
+
+			if m.activeView == flagDetail {
+				if m.flagDetail.IsConfirming() {
+					// Let FlagDetail handle enter for confirm/cancel buttons
+					cmd := m.flagDetail.HandleMsg(msg)
+					return m, cmd
+				}
+				m.flagDetail.ShowConfirm()
+				return m, nil
+			}
 		}
 	}
 
@@ -171,14 +190,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case configList:
 		// In split view, only update config list (right pane)
 		// App list (left pane) is read-only in this view
-		if m.configError == "" && m.configsPanel != nil {
+		if m.configsPanelError == "" && m.configsPanel != nil {
 			cmd = m.configsPanel.HandleMsg(msg)
 		}
 	case flagsTable:
 		cmd = m.flagsTable.HandleMsg(msg)
 	case flagDetail:
-		// Don't pass key events to underlying components in detail view
-		return m, nil
+		cmd = m.flagDetail.HandleMsg(msg)
 	}
 	return m, cmd
 }
@@ -194,27 +212,55 @@ func (m Model) View() string {
 
 	switch m.activeView {
 	case appList:
-		if m.appsError != "" {
-			view += m.appsPanel.RenderError(m.appsError)
+		if m.appsPanelError != "" {
+			view += m.appsPanel.RenderError(m.appsPanelError)
 		} else {
 			view += m.appsPanel.Render()
 		}
 	case configList:
-		if m.configsPanel != nil {
-			if m.configError != "" {
-				view += m.configsPanel.RenderError(m.configError)
-			} else {
-				view += m.configsPanel.Render()
-			}
+		if m.configsPanelError != "" {
+			view += m.configsPanel.RenderError(m.configsPanelError)
+		} else {
+			view += m.configsPanel.Render()
 		}
 	case flagsTable:
-		view += m.flagsTable.Render()
-		// case flagDetail:
-		// 	view += m.renderFlagDetailView()
+		if m.flagsTableError != "" {
+			view += m.flagsTable.RenderError(m.flagsTableError)
+		} else {
+			view += m.flagsTable.Render()
+		}
+	case flagDetail:
+		view += m.flagDetail.Render()
 	}
 
 	return view
 }
+
+// func (m Model) renderFlagDetailModal() string {
+// 	// Render the background (flags table)
+// 	background := m.flagsTable.Render()
+//
+// 	// Get the selected flag
+// 	data := m.flagsTable.Data()
+// 	if m.selectedFlagIdx < 0 || m.selectedFlagIdx >= len(data.Flags) {
+// 		return background
+// 	}
+// 	flag := data.Flags[m.selectedFlagIdx]
+//
+// 	// Create the modal style
+// 	modalStyle := lipgloss.NewStyle().
+// 		Border(lipgloss.RoundedBorder()).
+// 		BorderForeground(lipgloss.Color("#8cafd2")).
+// 		Padding(1, 2).
+// 		Width(40)
+//
+// 	// Modal content
+// 	content := fmt.Sprintf("Flag: %s\n\nPress ESC to close", flag.FlagName)
+// 	modal := modalStyle.Render(content)
+//
+// 	// Overlay the modal centered on the background
+// 	return overlay.Composite(modal, background, overlay.Center, overlay.Center, 0, 0)
+// }
 
 // func (m Model) renderFlagDetailView() string {
 // 	if m.selectedFlagIdx < 0 || m.selectedFlagIdx >= len(m.flagsData.Flags) {

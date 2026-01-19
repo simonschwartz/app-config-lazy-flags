@@ -13,7 +13,7 @@ import (
 const nordfoxBlue = lipgloss.Color("#8cafd2")
 
 const (
-	Title = "Feature Flags"
+	FeatureFlagsTitle = "Feature Flags"
 )
 
 type FlagsTable struct {
@@ -24,6 +24,21 @@ type FlagsTable struct {
 	data       FlagsTableData
 }
 
+// Manages the rendering of the flags table panel.
+// Renders a navigatable table of AppConfig feature flags
+// as returned by appconfigx.GetFlags
+//
+// CLI output looks like this:
+//
+// ┌─ Feature Flags ──────────────────────────────────────────────────────────────┐
+// │                                                                              │
+// │  Flag Name             development      staging          production          │
+// │  beta_feature          on               off              off                 │
+// │  dark_mode             on               on               off                 │
+// │  new_checkout          off              on               off                 │
+// │                                                                              │
+// │                                                                              │
+// └──────────────────────────────────────────────────────────────────────────────┘
 func NewFlagsTable(height int, minWidth int, flags []appconfig.Result) *FlagsTable {
 	ft := &FlagsTable{
 		height:   height,
@@ -85,7 +100,7 @@ func (t *FlagsTable) Render() string {
 	if len(t.data.Flags) == 0 {
 		msg := "You have no flags"
 		paddedMsg := msg + strings.Repeat("\n", t.height-1)
-		return RenderPanel(paddedMsg, Title, t.minWidth)
+		return RenderPanel(paddedMsg, FeatureFlagsTitle, t.minWidth)
 	}
 
 	// Shift table content 1 space left to align with panel title
@@ -103,7 +118,12 @@ func (t *FlagsTable) Render() string {
 			}
 		}
 	}
-	return RenderPanel(strings.Join(lines, "\n"), Title, t.tableWidth+7)
+	return RenderPanel(strings.Join(lines, "\n"), FeatureFlagsTitle, t.tableWidth+7)
+}
+
+func (t *FlagsTable) RenderError(errMsg string) string {
+	paddedErrMsg := errMsg + strings.Repeat("\n", t.height-1)
+	return RenderPanel(paddedErrMsg, FeatureFlagsTitle, t.minWidth)
 }
 
 func (t *FlagsTable) HandleMsg(msg tea.Msg) tea.Cmd {
@@ -116,8 +136,20 @@ func (t *FlagsTable) Cursor() int {
 	return t.model.Cursor()
 }
 
+func (t *FlagsTable) GetActiveRow() FlagRowData {
+	cursor := t.model.Cursor()
+	if cursor >= 0 && cursor < len(t.data.Flags) {
+		return t.data.Flags[cursor]
+	}
+	return FlagRowData{}
+}
+
 func (t *FlagsTable) Data() FlagsTableData {
 	return t.data
+}
+
+func (t *FlagsTable) EnvOrder() []string {
+	return t.data.EnvOrder
 }
 
 func pivotResults(results []appconfig.Result, envOrder []string) FlagsTableData {
